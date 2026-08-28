@@ -132,6 +132,13 @@ describe("resolve", () => {
     expect((await response.json() as { title: string }).title).toBe("Via header");
   });
 
+  it("varies on Accept, so a cached json body cannot be replayed to a browser", async () => {
+    const slug = await mintAndSlug("Cacheable");
+    const response = await call(new Request(`https://s.example.com/${slug}?format=json`));
+    expect(response.headers.get("vary")).toBe("Accept");
+    expect(response.headers.get("cache-control")).toContain("max-age");
+  });
+
   it("never exposes which caller minted the link", async () => {
     const slug = await mintAndSlug("Private attribution");
     const body = await (await call(new Request(`https://s.example.com/${slug}?format=json`))).json();
