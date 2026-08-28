@@ -17,6 +17,9 @@ const MINT_PATH = "/api/links";
 const CACHE_SECONDS = 1800;
 const TITLE_MAX_LENGTH = 120;
 const DESCRIPTION_MAX_LENGTH = 200;
+/** Probes to try past a collision before failing. Four is far beyond what a 2^72 keyspace makes
+ *  plausible; it exists so a pathological case fails loudly rather than overwriting someone. */
+const MAX_PROBES = 4;
 
 function json(body: unknown, status: number, headers: Record<string, string> = {}): Response {
   return new Response(JSON.stringify(body), {
@@ -29,6 +32,39 @@ function clamp(value: unknown, maxLength: number, fallback: string): string {
   if (typeof value !== "string") return fallback;
   const trimmed = value.trim();
   return trimmed ? trimmed.slice(0, maxLength) : fallback;
+}
+
+function isSameRecord(a: LinkRecord, b: LinkRecord): boolean {
+  return a.destination === b.destination && a.title === b.title && a.description === b.description;
+}
+
+/**
+ * Finds this record's slug: its own entry if it has one, otherwise the first free slot on its
+ * probe sequence.
+ *
+ * The sequence is derived from the record, so a re-mint retraces the same steps and lands on the
+ * same slug. That is what keeps minting idempotent without a reverse index. It also means an
+ * unchanged re-mint costs one read and no write, which is cheaper than the blind put it replaced.
+ *
+ * The read cannot be made fully fresh: KV caches for at least 60 seconds, so two mints colliding
+ * inside that window can still both see an empty slot and both write. This catches collisions
+ * against settled links, which is nearly all of them in practice, not the concurrent case. There
+ * is no put-if-absent on KV, so the concurrent case cannot be closed here at all.
+ */
+async function claimSlug(env: Env, record: LinkRecord): Promise<string | null> {
+  // The whole record is hashed, so two callers describing the same destination differently get two
+  // links rather than one of them silently winning.
+  const canonical = [record.destination, record.title, record.description].join("\n");
+
+  for (let attempt = 0; attempt < MAX_PROBES; attempt++) {
+    const slug = await deriveSlug(attempt === 0 ? canonical : `${canonical}\u0000${attempt}`);
+    const existing = await env.LINKS.get<LinkRecord>(slug, { type: "json" });
+
+    if (existing && !isSameRecord(existing, record)) continue;
+    if (!existing) await env.LINKS.put(slug, JSON.stringify(record));
+    return slug;
+  }
+  return null;
 }
 
 async function mint(request: Request, env: Env, origin: string): Promise<Response> {
@@ -54,10 +90,8 @@ async function mint(request: Request, env: Env, origin: string): Promise<Respons
     description: clamp(payload.description, DESCRIPTION_MAX_LENGTH, DEFAULT_DESCRIPTION),
   };
 
-  // The whole record is hashed, so two callers describing the same destination differently get two
-  // links instead of silently overwriting each other.
-  const slug = await deriveSlug([record.destination, record.title, record.description].join("\n"));
-  await env.LINKS.put(slug, JSON.stringify(record));
+  const slug = await claimSlug(env, record);
+  if (!slug) return json({ error: "slug_exhausted" }, 500);
 
   return json({ short_url: `${origin}/${slug}` }, 200);
 }
