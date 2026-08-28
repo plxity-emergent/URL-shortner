@@ -14,6 +14,8 @@ export interface Env {
 }
 
 const MINT_PATH = "/api/links";
+/** Same window as the KV read below, so a resolved link stays warm for as long as it is valid. */
+const JSON_CACHE_SECONDS = 300;
 /** A revoked link can still resolve at an already-warm PoP for this long. */
 const RESOLVE_CACHE_TTL_SECONDS = 300;
 const TITLE_MAX_LENGTH = 120;
@@ -103,12 +105,37 @@ async function mint(request: Request, env: Env, origin: string): Promise<Respons
   return json({ short_url: `${origin}/${slug}` }, 200);
 }
 
-async function resolve(slug: string, request: Request, env: Env): Promise<Response> {
+/** An explicit ask for the record rather than the destination. Header or query, both work. */
+function wantsJson(request: Request, url: URL): boolean {
+  if (url.searchParams.get("format") === "json") return true;
+  return (request.headers.get("accept") ?? "").includes("application/json");
+}
+
+/**
+ * The record without `caller`, which is internal attribution and no consumer's business.
+ * Open CORS is safe here: following the redirect already reveals every field, so this exposes
+ * nothing new, and it is an unauthenticated GET carrying no credentials.
+ */
+function jsonRepresentation(slug: string, record: LinkRecord): Response {
+  const { caller: _caller, ...publicFields } = record;
+  return new Response(JSON.stringify({ slug, ...publicFields }), {
+    headers: {
+      "content-type": "application/json",
+      "access-control-allow-origin": "*",
+      "cache-control": `public, max-age=${JSON_CACHE_SECONDS}`,
+    },
+  });
+}
+
+async function resolve(slug: string, request: Request, env: Env, url: URL): Promise<Response> {
   const record = await env.LINKS.get<LinkRecord>(slug, {
     type: "json",
     cacheTtl: RESOLVE_CACHE_TTL_SECONDS,
   });
   if (!record) return new Response("Not found", { status: 404 });
+
+  // An explicit ask wins over user-agent sniffing.
+  if (wantsJson(request, url)) return jsonRepresentation(slug, record);
 
   if (isCrawler(request.headers.get("user-agent"))) {
     return new Response(renderPreviewHtml(record), {
@@ -127,6 +154,6 @@ export default {
 
     const slug = url.pathname.slice(1);
     if (!slug || slug.includes("/")) return new Response("Not found", { status: 404 });
-    return resolve(slug, request, env);
+    return resolve(slug, request, env, url);
   },
 } satisfies ExportedHandler<Env>;
