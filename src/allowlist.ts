@@ -7,9 +7,6 @@ const APEXES = ["emergentagent.com", "emergentagent.net"];
  *  those subdomains serve user-controlled content and must never be wrappable. */
 const ENV_LABELS = ["staging", "dev"];
 
-export const DEFAULT_TITLE = "Shared link";
-export const DEFAULT_DESCRIPTION = "Opens in your browser";
-
 /**
  * Matched label by label. `endsWith` would accept `customer-assets.emergentagent.com.evil.test`
  * and `startsWith` would accept `customer-assetshub.emergentagent.com`. Both are tested.

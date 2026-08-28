@@ -46,10 +46,18 @@ describe("mint", () => {
     );
   });
 
-  it("falls back to the default card text", async () => {
+  it("leaves card text null rather than inventing it", async () => {
     const slug = new URL(await shortUrlFor({ url: DESTINATION })).pathname.slice(1);
     const body = await (await call(new Request(`https://s.example.com/${slug}?format=json`))).json();
-    expect(body).toMatchObject({ title: "Shared link", description: "Opens in your browser" });
+    expect(body).toMatchObject({ title: null, description: null });
+  });
+
+  it("treats a blank title as absent", async () => {
+    const slug = new URL(await shortUrlFor({ url: DESTINATION, title: "   " })).pathname.slice(1);
+    const body = (await (await call(new Request(`https://s.example.com/${slug}?format=json`))).json()) as {
+      title: string | null;
+    };
+    expect(body.title).toBeNull();
   });
 
   it("rejects a missing or wrong token", async () => {
@@ -73,7 +81,7 @@ describe("mint", () => {
 
     /** The slug a record lands on before any probing. */
     async function firstSlugFor(title: string): Promise<string> {
-      return deriveSlug([DESTINATION, title, "Opens in your browser"].join("\n"));
+      return deriveSlug([DESTINATION, title, ""].join("\n"));
     }
 
     it("probes past a collision instead of overwriting someone else's link", async () => {
@@ -103,7 +111,7 @@ describe("mint", () => {
     });
 
     it("fails loudly rather than overwriting when every probe is taken", async () => {
-      const canonical = [DESTINATION, "Hopeless", "Opens in your browser"].join("\n");
+      const canonical = [DESTINATION, "Hopeless", ""].join("\n");
       const blocker = { destination: "https://customer-assets.emergentagent.com/b.mp4", title: "b", description: "b" };
       for (let attempt = 0; attempt < 4; attempt++) {
         const slug = await deriveSlug(attempt === 0 ? canonical : `${canonical}\u0000${attempt}`);
@@ -144,7 +152,7 @@ describe("resolve", () => {
       slug,
       destination: DESTINATION,
       title: "Quarterly report",
-      description: "Opens in your browser",
+      description: null,
     });
   });
 

@@ -1,7 +1,7 @@
 // ABOUTME: Resolves short links and mints new ones for a single trusted caller.
 // ABOUTME: The mint route is the only write path and is guarded by one service token.
 
-import { DEFAULT_DESCRIPTION, DEFAULT_TITLE, validateDestination } from "./allowlist";
+import { validateDestination } from "./allowlist";
 import { isCrawler } from "./crawler";
 import { renderPreviewHtml, type LinkRecord } from "./og";
 import { deriveSlug } from "./slug";
@@ -28,10 +28,11 @@ function json(body: unknown, status: number, headers: Record<string, string> = {
   });
 }
 
-function clamp(value: unknown, maxLength: number, fallback: string): string {
-  if (typeof value !== "string") return fallback;
+/** Null for anything absent or blank. Nothing is substituted on the caller's behalf. */
+function clamp(value: unknown, maxLength: number): string | null {
+  if (typeof value !== "string") return null;
   const trimmed = value.trim();
-  return trimmed ? trimmed.slice(0, maxLength) : fallback;
+  return trimmed ? trimmed.slice(0, maxLength) : null;
 }
 
 function isSameRecord(a: LinkRecord, b: LinkRecord): boolean {
@@ -54,7 +55,7 @@ function isSameRecord(a: LinkRecord, b: LinkRecord): boolean {
 async function claimSlug(env: Env, record: LinkRecord): Promise<string | null> {
   // The whole record is hashed, so two callers describing the same destination differently get two
   // links rather than one of them silently winning.
-  const canonical = [record.destination, record.title, record.description].join("\n");
+  const canonical = [record.destination, record.title ?? "", record.description ?? ""].join("\n");
 
   for (let attempt = 0; attempt < MAX_PROBES; attempt++) {
     const slug = await deriveSlug(attempt === 0 ? canonical : `${canonical}\u0000${attempt}`);
@@ -86,8 +87,8 @@ async function mint(request: Request, env: Env, origin: string): Promise<Respons
 
   const record: LinkRecord = {
     destination,
-    title: clamp(payload.title, TITLE_MAX_LENGTH, DEFAULT_TITLE),
-    description: clamp(payload.description, DESCRIPTION_MAX_LENGTH, DEFAULT_DESCRIPTION),
+    title: clamp(payload.title, TITLE_MAX_LENGTH),
+    description: clamp(payload.description, DESCRIPTION_MAX_LENGTH),
   };
 
   const slug = await claimSlug(env, record);

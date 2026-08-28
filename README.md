@@ -13,6 +13,7 @@ Slugs are 12 URL-safe characters, computed from the record rather than handed ou
 | KV | `LINKS`, **Dev** account |
 | Domain | none. Only the `*.workers.dev` hostname Cloudflare provides |
 | CI | tests on every push and PR, deploys `main` |
+| Audience | internal services only. The mint endpoint is token-guarded and was never public |
 
 The Dev account id is pinned in `wrangler.jsonc`. Leave it there: the credentials in use can see a
 Prod account too, and without it Wrangler is free to choose.
@@ -41,7 +42,10 @@ GET /health
   200  ok
 ```
 
-`title` and `description` are optional and fall back to the defaults in `src/allowlist.ts`.
+`title` and `description` are optional and **nothing is substituted when they are absent**. A
+blank or missing value is stored as null and the crawler card simply omits those tags. A crawler
+that finds no `og:title` shows the url as the headline, which is the honest outcome: the link has no
+name. Inventing one would put words in the caller's mouth on a page carrying their branding.
 
 `destination` is derived from the validated `url` and cannot be set directly, so neither the
 allowlist nor the stored record can be talked around by sending extra fields.
@@ -172,7 +176,7 @@ hour. Nothing else is cached: the redirect and the crawler card are computed fre
 ```bash
 npm install
 echo 'MINT_TOKEN=local-development-token' > .dev.vars
-npm test          # 43 tests, runs in workerd, no network
+npm test          # 46 tests, runs in workerd, no network
 npm run typecheck
 npm run dev       # http://localhost:8787
 ```
