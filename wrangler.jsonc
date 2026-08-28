@@ -20,9 +20,5 @@
       "binding": "LINKS",
       "id": "966d05eeec9d4065a0477b6db5500e60"
     }
-  ],
-
-  "vars": {
-    "DEFAULT_OG_IMAGE": "https://example.com/preview.png"
-  }
+  ]
 }

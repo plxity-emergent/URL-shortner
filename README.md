@@ -36,9 +36,13 @@ GET /health
   200  ok
 ```
 
-`title`, `description` and `image` are optional and fall back to whatever the namespace declares.
-An image that fails the namespace's rules is dropped in favour of the default rather than failing
-the request: a bad thumbnail should cost you a thumbnail, not a link.
+`title` and `description` are optional and fall back to whatever the namespace declares.
+
+`image` is optional too, but it is only kept if the namespace declares `image` rules and the URL
+satisfies them. Anything else is dropped, and a link with no image renders no `og:image` at all and
+falls back to a plain `summary` card rather than a `summary_large_image` one pointing at nothing.
+Dropping is deliberate: a bad thumbnail should cost you a thumbnail, not a link, and an unvalidated
+attacker-supplied `og:image` on your own domain is worth refusing.
 
 ## Adding a namespace
 
