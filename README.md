@@ -1,14 +1,21 @@
 # URL shortener
 
-Short links resolved at the edge on Cloudflare Workers. Crawlers get a proper Open Graph preview
-card instead of a bare URL, and the list of hosts it is willing to redirect to lives in one file.
+Short links resolved at the edge on Cloudflare Workers. One URL answers three different audiences
+with three different responses, and the list of hosts it will redirect to lives in one file.
 
 Slugs are 12 URL-safe characters, computed from the record rather than handed out by a counter.
 
 ## Status
 
-Deployed to the **Dev** Cloudflare account only. No custom domain, so the only hostname is the
-`*.workers.dev` one Cloudflare provides.
+| | |
+| --- | --- |
+| Worker | `url-shortener`, **Dev** account, at `https://url-shortener.manish-f0f.workers.dev` |
+| KV | `LINKS`, **Dev** account |
+| Domain | none. Only the `*.workers.dev` hostname Cloudflare provides |
+| CI | tests on every push and PR, deploys `main` |
+
+The Dev account id is pinned in `wrangler.jsonc`. Leave it there: the credentials in use can see a
+Prod account too, and without it Wrangler is free to choose.
 
 ## API
 
@@ -39,21 +46,28 @@ GET /health
 `destination` is derived from the validated `url` and cannot be set directly, so neither the
 allowlist nor the stored record can be talked around by sending extra fields.
 
+Use the full destination path. The Worker validates the **host**, not whether the file exists, so a
+truncated path mints a link the origin will reject.
+
 ### Example
 
 ```bash
-export MINT_TOKEN=…
+export MINT_TOKEN=…   # the Worker secret; ask, or read it from your own .dev.vars
 
-curl -X POST https://<host>/api/links \
+H=https://url-shortener.manish-f0f.workers.dev
+
+curl -X POST $H/api/links \
   -H "authorization: Bearer $MINT_TOKEN" \
   -H "content-type: application/json" \
-  -d '{"url":"https://customer-assets.emergentagent.com/a/b.mp4","title":"Diet Coke, final cut"}'
-# {"short_url":"https://<host>/kJ3xQz9mB7aY"}
+  -d '{"url":"https://customer-assets.emergentagent.com/a/b.mp4","title":"Quarterly report"}'
+# {"short_url":"https://url-shortener.manish-f0f.workers.dev/kJ3xQz9mB7aY"}
 
-curl -sI https://<host>/kJ3xQz9mB7aY                    # 302 to the destination
-curl -s  "https://<host>/kJ3xQz9mB7aY?format=json"      # the record
-curl -s -A "Slackbot-LinkExpanding 1.0" https://<host>/kJ3xQz9mB7aY   # the card
+curl -sI $H/kJ3xQz9mB7aY                                   # 302 to the destination
+curl -s  "$H/kJ3xQz9mB7aY?format=json"                     # the record
+curl -s -A "Slackbot-LinkExpanding 1.0" $H/kJ3xQz9mB7aY    # the card
 ```
+
+Run the POST twice and you get the same link back. Minting is idempotent.
 
 ## Three responses, one url
 
@@ -63,14 +77,22 @@ curl -s -A "Slackbot-LinkExpanding 1.0" https://<host>/kJ3xQz9mB7aY   # the card
 | A known crawler | an Open Graph document | Slack and friends fetch on paste, do not run JS, and will not follow a redirect |
 | Anyone else | `302` to the destination | the normal case |
 
-JSON is selected by query parameter rather than by `Accept`, deliberately. A query parameter is its
-own cache key, so one url can never serve a cached JSON body to someone who wanted the redirect.
-Content negotiation on `Accept` would work too, but only with a `Vary: Accept` header, and it is one
-more thing to get right for no benefit here.
+**The crawler branch** is the only reason a paste unfurls as a card. Its one real decision is which
+way to be wrong: anything unrecognised counts as human, because a crawler misread as human costs a
+preview card, while a human misread as a crawler gets HTML instead of the thing they clicked. The
+pattern names crawlers explicitly and never matches a generic `bot`, and the card carries a
+`meta refresh` as a second net.
 
 **Do not point a `<video>` or `<img>` at a short url.** A media element issues many `Range`
 requests, a `302` is not cacheable, so the browser re-walks the redirect on every chunk and pays the
-extra hop each time. Resolve once with `?format=json`, then use the real url.
+extra hop each time. Measured: ~190ms via the shortener against ~30ms straight to the origin.
+Resolving once with `?format=json` instead moves the whole transfer to the origin: **332 bytes**
+from here against **5.6 MB** direct.
+
+JSON is selected by query parameter rather than by `Accept`, deliberately. A query parameter is its
+own cache key, so one url can never serve a cached JSON body to someone who wanted the redirect.
+Content negotiation on `Accept` would work too, but only with a `Vary: Accept` header, and that is
+one more thing to get right for no benefit here.
 
 ## The allowlist
 
@@ -89,28 +111,53 @@ breaks every link the service has ever handed out.
 `deriveSlug` takes SHA-256 of the record, keeps the first 9 bytes, and base64url-encodes them. Nine
 bytes because it is a multiple of three, so the output is exactly 12 characters with no padding.
 
-Minting the same record twice returns the same slug, so callers can retry freely and re-minting on
-every share leaves no duplicates.
+### The probe
 
-On a collision, minting probes. It derives the next candidate slug from the record and tries again,
-up to four times, and only writes into a slot that is free or already its own. The probe sequence is
-derived from the record, so a re-mint retraces the same steps and lands on the same slug, which is
-what keeps minting idempotent without a reverse index. It also means an unchanged re-mint costs one
-read and no write, cheaper than the blind put it replaced. If all four probes are taken, minting
-fails with `slug_exhausted` rather than overwriting anyone.
+A slug can be in one of three states, and minting handles all three:
 
-Two caveats, both honest limits rather than bugs. KV caches reads for at least 60 seconds, so two
-mints colliding inside that window can both see a free slot and both write; the probe catches
-collisions against settled links, which is nearly all of them, not the concurrent case. And KV has
-no put-if-absent, so read-then-write is not atomic and that case cannot be closed here at all.
+| State at the slug | What happens |
+| --- | --- |
+| **Free** (nothing stored) | write the record, return the slug |
+| **Taken by an identical record** | return the slug. No retry, and no write |
+| **Taken by a different record** | probe: derive the next candidate and look again |
 
-The keyspace is still doing most of the work: 2^72, so a collision is around one in a million at
-100 million links. If that ever feels tight, widen `SLUG_BYTES` from 9 to 12 for 16-character slugs
-and roughly one in four billion. Do not go below 10.
+```ts
+if (existing && !isSameRecord(existing, record)) continue;
+if (!existing) await env.LINKS.put(slug, JSON.stringify(record));
+return slug;
+```
 
-**The slug depends on the record, so changing the record's shape re-keys every future mint.** Old
-links keep resolving, but a caller re-minting after such a change quietly gets a second link for the
-same thing.
+"Identical" means the three record fields match, not that the same person minted it. There is no
+author or caller anywhere in the record. Two people minting the same destination with the same title
+get the same link, which is what stops one thing accumulating duplicate links.
+
+The probe sequence is derived from the record, so a re-mint retraces the same steps and lands on the
+same slug. That is what keeps minting idempotent without a reverse index. It also means an unchanged
+re-mint costs one read and no write, cheaper than the blind `put` it replaced, since a read is a
+tenth the price of a write. Four exhausted probes returns `slug_exhausted` rather than overwriting
+anyone.
+
+### What the probe does not fix
+
+Two honest limits, both properties of KV rather than bugs:
+
+- **KV caches reads for at least 60 seconds.** Two mints colliding inside that window can both see a
+  free slot and both write. The probe catches collisions against settled links, which is nearly all
+  of them in practice, not the concurrent case.
+- **KV has no put-if-absent.** Read-then-write is not atomic, so even with a perfectly fresh read
+  two requests can both find the slot empty. That cannot be closed here at all; it needs a store
+  with real atomicity, such as a unique constraint or a Durable Object.
+
+So the keyspace is still doing most of the work. 2^72 puts a collision at roughly one in a million
+at 100 million links. If that ever feels tight, widen `SLUG_BYTES` from 9 to 12 for 16-character
+slugs and roughly one in four billion. Do not go below 10.
+
+### A gap worth knowing
+
+The slug depends on the record, and the record depends on this code. Changing the record's shape
+re-keys every future mint. Old links keep resolving, but a caller re-minting an old input after such
+a change quietly gets a second link for the same thing. Fix, if it matters: version the canonical
+string, or hash only caller-supplied fields.
 
 ## Caching
 
@@ -140,14 +187,17 @@ Pushing to `main` runs the tests and deploys. Two repository secrets are require
 | `CLOUDFLARE_API_TOKEN` | a Dev-scoped token with **Workers Scripts: Edit** and **Workers KV Storage: Edit** |
 
 `CLOUDFLARE_API_TOKEN` is currently a placeholder, so the deploy job fails until a real one is set.
-
-The account id is also pinned in `wrangler.jsonc`. Leave it there: the credentials in use can see a
-Prod account too, and without it Wrangler is free to choose.
+Deploys have been by hand in the meantime.
 
 ## Integrating
 
-Do not expose the mint endpoint to browsers. Put an authenticated endpoint in a service you already
-run, have it hold the token, and let it forward. Then:
+Do not expose the mint endpoint to browsers. An endpoint a browser can reach is one anybody's
+browser can reach, and the allowlist constrains where a link points, not the title wrapped around
+it, so an open mint lets a stranger publish a link on your domain saying whatever they like. KV
+writes are billed too, which makes it a denial-of-wallet target.
+
+Put an authenticated endpoint in a service you already run, have it hold the token, and let it
+forward. Then:
 
 - **Mint when someone asks to share**, not when the thing is created. Most items are never shared.
 - **Fire it when the share UI opens**, not on the copy button. Clipboard APIs want a user gesture,
@@ -157,8 +207,9 @@ run, have it hold the token, and let it forward. Then:
 
 ## Not implemented
 
-- Revocation and expiry. KV holds the only copy and nothing deletes it.
-- Preview images. Cards are text-only. There is no validated source for a thumbnail yet.
-- Click analytics. When wanted, put it behind `ctx.waitUntil` so it never delays the redirect.
-- Custom slugs. Every slug is derived; vanity slugs need their own keyspace and a compare-and-set
-  KV cannot do.
+- **Revocation and expiry.** KV holds the only copy and nothing deletes it. A handful of throwaway
+  records from testing sit there permanently.
+- **Preview images.** Cards are text-only; there is no validated source for a thumbnail.
+- **Click analytics.** When wanted, put it behind `ctx.waitUntil` so it never delays the redirect.
+- **Custom slugs.** Every slug is derived. Vanity slugs need their own keyspace, a reserved-word
+  list, and the compare-and-set KV cannot do.
