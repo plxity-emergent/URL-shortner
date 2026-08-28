@@ -141,9 +141,11 @@ anyone.
 
 Two honest limits, both properties of KV rather than bugs:
 
-- **KV caches reads for at least 60 seconds.** Two mints colliding inside that window can both see a
-  free slot and both write. The probe catches collisions against settled links, which is nearly all
-  of them in practice, not the concurrent case.
+- **KV caches reads for at least 60 seconds.** If two *different* records hash to the same slug and
+  are minted inside that window, both can read the slot as free and both write, and the second
+  destroys the first. The probe catches collisions against settled links, which is nearly all of
+  them in practice, not this concurrent case. Note this only concerns records that differ: two mints
+  of the *same* record write identical bytes, so a double write there loses nothing.
 - **KV has no put-if-absent.** Read-then-write is not atomic, so even with a perfectly fresh read
   two requests can both find the slot empty. That cannot be closed here at all; it needs a store
   with real atomicity, such as a unique constraint or a Durable Object.
