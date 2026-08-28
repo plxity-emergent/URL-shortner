@@ -2,6 +2,7 @@ import { env, createExecutionContext, waitOnExecutionContext } from "cloudflare:
 import { describe, expect, it } from "vitest";
 
 import worker from "../src/index";
+import { deriveSlug } from "../src/slug";
 import type { Env } from "../src/index";
 
 const TEST_ENV = { ...env, MINT_TOKEN: "test-token" } as Env;
@@ -65,6 +66,54 @@ describe("mint", () => {
 
   it("rejects a non-POST", async () => {
     expect((await call(new Request("https://s.example.com/api/links", { method: "GET" }))).status).toBe(405);
+  });
+
+  describe("collisions", () => {
+    const LINKS = (env as unknown as Env).LINKS;
+
+    /** The slug a record lands on before any probing. */
+    async function firstSlugFor(title: string): Promise<string> {
+      return deriveSlug([DESTINATION, title, "Opens in your browser"].join("\n"));
+    }
+
+    it("probes past a collision instead of overwriting someone else's link", async () => {
+      const squatted = await firstSlugFor("Colliding");
+      const squatter = {
+        destination: "https://customer-assets.emergentagent.com/someone/else.mp4",
+        title: "Not yours",
+        description: "d",
+      };
+      await LINKS.put(squatted, JSON.stringify(squatter));
+
+      const slug = new URL(await shortUrlFor({ url: DESTINATION, title: "Colliding" })).pathname.slice(1);
+
+      expect(slug).not.toBe(squatted);
+      expect(await LINKS.get(squatted, { type: "json" })).toEqual(squatter);
+    });
+
+    it("stays idempotent after probing, retracing the same sequence", async () => {
+      const squatted = await firstSlugFor("Still colliding");
+      await LINKS.put(
+        squatted,
+        JSON.stringify({ destination: "https://customer-assets.emergentagent.com/x.mp4", title: "t", description: "d" }),
+      );
+
+      const body = { url: DESTINATION, title: "Still colliding" };
+      expect(await shortUrlFor(body)).toBe(await shortUrlFor(body));
+    });
+
+    it("fails loudly rather than overwriting when every probe is taken", async () => {
+      const canonical = [DESTINATION, "Hopeless", "Opens in your browser"].join("\n");
+      const blocker = { destination: "https://customer-assets.emergentagent.com/b.mp4", title: "b", description: "b" };
+      for (let attempt = 0; attempt < 4; attempt++) {
+        const slug = await deriveSlug(attempt === 0 ? canonical : `${canonical}\u0000${attempt}`);
+        await LINKS.put(slug, JSON.stringify(blocker));
+      }
+
+      const response = await call(mintRequest({ url: DESTINATION, title: "Hopeless" }));
+      expect(response.status).toBe(500);
+      expect(await response.json()).toEqual({ error: "slug_exhausted" });
+    });
   });
 });
 

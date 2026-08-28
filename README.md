@@ -22,6 +22,7 @@ POST /api/links
   401  unauthorized           token absent or wrong
   405  method_not_allowed     not a POST
   422  destination_rejected   url is not on the allowlist
+  500  slug_exhausted         four consecutive slug collisions; effectively impossible
 
 GET /{slug}
   200  application/json       when asked with ?format=json
@@ -91,15 +92,21 @@ bytes because it is a multiple of three, so the output is exactly 12 characters 
 Minting the same record twice returns the same slug, so callers can retry freely and re-minting on
 every share leaves no duplicates.
 
-Two different records landing on the same slug is unguarded. There is no uniqueness check: minting
-is a single `KV.put` that does not read first, does not compare, and would not notice. The keyspace
-is 2^72, so a collision is around one in a million at 100 million links, and that is the whole
-defense. It is a bet, written down deliberately.
+On a collision, minting probes. It derives the next candidate slug from the record and tries again,
+up to four times, and only writes into a slot that is free or already its own. The probe sequence is
+derived from the record, so a re-mint retraces the same steps and lands on the same slug, which is
+what keeps minting idempotent without a reverse index. It also means an unchanged re-mint costs one
+read and no write, cheaper than the blind put it replaced. If all four probes are taken, minting
+fails with `slug_exhausted` rather than overwriting anyone.
 
-Retrying on a collision would work and stay idempotent, but on KV the check cannot be trusted:
-writes take up to a minute to propagate and misses are cached, so the collision most worth catching
-reads back as free. There is also no compare-and-set. If the odds ever feel tight, widen
-`SLUG_BYTES` from 9 to 12 for 16-character slugs. Do not go below 10 without a real collision path.
+Two caveats, both honest limits rather than bugs. KV caches reads for at least 60 seconds, so two
+mints colliding inside that window can both see a free slot and both write; the probe catches
+collisions against settled links, which is nearly all of them, not the concurrent case. And KV has
+no put-if-absent, so read-then-write is not atomic and that case cannot be closed here at all.
+
+The keyspace is still doing most of the work: 2^72, so a collision is around one in a million at
+100 million links. If that ever feels tight, widen `SLUG_BYTES` from 9 to 12 for 16-character slugs
+and roughly one in four billion. Do not go below 10.
 
 **The slug depends on the record, so changing the record's shape re-keys every future mint.** Old
 links keep resolving, but a caller re-minting after such a change quietly gets a second link for the
@@ -116,7 +123,7 @@ hour. Nothing else is cached: the redirect and the crawler card are computed fre
 ```bash
 npm install
 echo 'MINT_TOKEN=local-development-token' > .dev.vars
-npm test          # 40 tests, runs in workerd, no network
+npm test          # 43 tests, runs in workerd, no network
 npm run typecheck
 npm run dev       # http://localhost:8787
 ```
