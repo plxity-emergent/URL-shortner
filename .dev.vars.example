@@ -1,0 +1,3 @@
+# Copy to .dev.vars for local `wrangler dev`. Never commit the real file.
+# Maps a caller name to its mint token. The caller name is stamped on every link it creates.
+MINT_TOKENS={"proxy":"local-development-token"}

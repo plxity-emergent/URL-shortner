@@ -1,0 +1,28 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "url-shortener",
+
+  // Pinned deliberately. This account is the Dev account. Without an explicit account_id wrangler
+  // will pick one when the token can see several, and this token can also see Prod.
+  "account_id": "ef0f9f6628e87915b13b39fefadc2757",
+
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-01",
+  "observability": { "enabled": true },
+
+  // Cloudflare's own *.workers.dev hostname. No custom domain, no DNS record, no zone involved.
+  "workers_dev": true,
+
+  // Created in the Dev account as "url-shortener-LINKS". No preview_id: local dev uses Miniflare's
+  // on-disk storage, and we never run `wrangler dev --remote`.
+  "kv_namespaces": [
+    {
+      "binding": "LINKS",
+      "id": "966d05eeec9d4065a0477b6db5500e60"
+    }
+  ],
+
+  "vars": {
+    "DEFAULT_OG_IMAGE": "https://example.com/preview.png"
+  }
+}
