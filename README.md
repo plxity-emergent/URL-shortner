@@ -174,69 +174,29 @@ hour. Nothing else is cached: the redirect and the crawler card are computed fre
 ## FAQ
 
 **What if two people request the same destination URL?**
-Depends on the rest of the request. Same url *and* title *and* description gives one link. Different
-card text gives two different slugs that both resolve to the same file. The whole record is the
-identity, not just the url.
+Depends on the rest of the request. Same url, title and description gives one link, and asking again
+returns that same link without writing. Different card text gives two slugs that both resolve to the
+same file. The whole record is the identity, not just the url. That is deliberate: it means nobody
+can silently retitle someone else's link, and the price is that one file can end up with several.
 
-**Why is the card text part of the identity?**
-So nobody can silently retitle someone else's link. The trade is visible duplicates: one file can
-have several short links. Hashing only the destination would dedupe them, at the cost of the second
-caller's title either overwriting the first's or being discarded.
-
-**What if the identical request comes twice?**
-Same slug every time. The second mint finds its own record already there and returns it **without
-writing**. Callers can retry freely.
-
-**What if two identical requests land at the same instant?**
-Nothing to resolve. Both derive the same slug and write identical bytes, so whoever lands last
-writes the same thing. Verified with 12 concurrent mints returning one slug.
-
-**What if two *different* records hash to the same slug?**
-The probe. Minting reads the slot first, and if it holds a different record it derives the next
-candidate and tries again, up to four times. It never overwrites. Four exhausted probes returns
-`500 slug_exhausted`.
-
-**Can two concurrent mints still clobber each other?**
-Only if they are *different* records that hash-collide **and** land within KV's 60-second read
-cache. KV has no put-if-absent, so that gap cannot be closed here. Roughly 10^-20 per mint.
-
-**Can someone guess or enumerate slugs?**
-12 base64url characters is 2^72, so no. But that is obscurity, not access control. Anyone holding a
-link can follow it, so anything sensitive must be protected at the destination.
+**What if two different records land on the same slug?**
+Minting reads the slot first. If it holds a different record it derives the next candidate and tries
+again, up to four times, and never overwrites. Four exhausted probes returns `500 slug_exhausted`.
+The one gap it cannot close: KV caches reads for 60 seconds and has no put-if-absent, so two
+colliding records minted inside that window can both see a free slot. Roughly 10^-20 per mint.
 
 **What stops this becoming an open redirect?**
-The allowlist. Hosts are matched label by label: `endsWith` would accept
-`…emergentagent.com.evil.test` and `startsWith` would accept `customer-assetshub…`, and both are
-tested. `preview` subdomains are excluded because they serve user-controlled content.
+The allowlist, plus the fact that `destination` is derived from the validated `url` rather than
+accepted as a field. Hosts are matched label by label, because `endsWith` would accept
+`…emergentagent.com.evil.test` and `startsWith` would accept `customer-assetshub…`, both tested.
+`preview` subdomains are excluded because they serve user-controlled content. A leaked mint token
+can only produce links to allowlisted hosts.
 
-**Can a caller point a link anywhere?**
-No. `destination` is derived from the validated `url` and cannot be set directly; sending it as a
-field is ignored. A leaked mint token can only produce links to allowlisted hosts.
-
-**Can someone change or delete my link?**
-Neither. A different record is a different slug, so there is no way to address an existing link and
-rewrite it. There is also no delete path at all, which is the flip side: nothing can be cleaned up.
-
-**Why did the slug change after a deploy?**
-The slug is a hash of the record, so changing the record's shape re-keys every future mint. Old
-links keep resolving, but re-minting an old input yields a new slug. This happened three times
-during development.
-
-**Why does a short link open the raw file instead of a branded page?**
-Because the stored destination *is* the file. A person following it gets a `302` straight there.
-Landing somewhere branded would mean storing that page as the destination instead.
-
-**Is the JSON endpoint public?**
-Yes, with open CORS. It reveals nothing the redirect does not already reveal, and it is an
-unauthenticated `GET` carrying no credentials.
-
-**What happens if the shortener is down?**
-Minting fails. Callers are expected to hold the long url and fall back to it. Shortening is cosmetic
-and nothing about sharing should break without it.
-
-**Why a query parameter instead of the `Accept` header?**
-A query parameter is its own cache key, so a cached JSON body can never be handed to someone who
-wanted the redirect. `Accept` would need a `Vary: Accept` header to be safe, for no benefit.
+**Can someone change or delete a link?**
+Neither, and those are one property seen from two sides. A different record is a different slug, so
+there is no way to address an existing link and rewrite it, and there is no delete path either, so
+nothing can be cleaned up. Note that an unguessable slug is obscurity, not access control: anyone
+holding a link can follow it, so anything sensitive must be protected at the destination.
 
 ## Local development
 
