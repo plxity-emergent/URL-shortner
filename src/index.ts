@@ -123,6 +123,11 @@ function jsonRepresentation(slug: string, record: LinkRecord): Response {
       "content-type": "application/json",
       "access-control-allow-origin": "*",
       "cache-control": `public, max-age=${JSON_CACHE_SECONDS}`,
+      // Load-bearing. One url serves json or a redirect depending on Accept, and this response is
+      // cacheable, so without Vary a cached json body could be replayed to a browser that wanted
+      // the redirect. `?format=json` happens to dodge it by being a distinct key; the header form
+      // does not.
+      vary: "Accept",
     },
   });
 }
