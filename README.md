@@ -28,6 +28,7 @@ POST /api/links
   422  destination_rejected   url failed the namespace's rules
 
 GET /{slug}
+  200  application/json       the record, when asked via ?format=json or Accept: application/json
   200  text/html              Open Graph document, for known crawlers
   302  Location: <destination>  for everyone else
   404  unknown or malformed slug
@@ -43,6 +44,34 @@ satisfies them. Anything else is dropped, and a link with no image renders no `o
 falls back to a plain `summary` card rather than a `summary_large_image` one pointing at nothing.
 Dropping is deliberate: a bad thumbnail should cost you a thumbnail, not a link, and an unvalidated
 attacker-supplied `og:image` on your own domain is worth refusing.
+
+## Representations
+
+A slug has one identity and several representations, chosen by how you ask:
+
+| How you ask | What you get |
+| --- | --- |
+| `?format=json`, or `Accept: application/json` | the record as JSON |
+| A known crawler user-agent | an Open Graph document |
+| Anything else | `302` to the destination |
+
+An explicit JSON ask wins over user-agent sniffing.
+
+```bash
+curl "https://<host>/kJ3xQz9mB7aY?format=json"
+# {"slug":"kJ3xQz9mB7aY","namespace":"asset","destination":"https://…","title":"…",
+#  "description":"…","image":null}
+```
+
+The JSON representation exists so a consumer can resolve a slug once and then use the destination
+directly, rather than pointing a `<video>` or `<img>` at the short URL. That matters more than it
+sounds: a media element issues many `Range` requests, a `302` is not cacheable, so the browser would
+re-walk the redirect on every chunk and pay the extra hop each time. Resolve once, play from the
+real URL.
+
+`caller` is deliberately omitted, being internal attribution. CORS is open because following the
+redirect already reveals every field in the response, so this exposes nothing new, and it is an
+unauthenticated GET carrying no credentials.
 
 ## Adding a namespace
 

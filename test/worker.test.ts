@@ -107,6 +107,55 @@ describe("resolve", () => {
     expect(await response.text()).not.toContain("<script>alert(1)</script>");
   });
 
+  it("returns the record as json when asked by query param", async () => {
+    const slug = await mintAndSlug("Quarterly report");
+    const response = await call(new Request(`https://s.example.com/${slug}?format=json`));
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toContain("application/json");
+    expect(response.headers.get("access-control-allow-origin")).toBe("*");
+    expect(await response.json()).toEqual({
+      slug,
+      namespace: "example",
+      destination: DESTINATION,
+      title: "Quarterly report",
+      description: "Opens in your browser",
+      image: null,
+    });
+  });
+
+  it("returns the record as json when asked by accept header", async () => {
+    const slug = await mintAndSlug("Via header");
+    const response = await call(
+      new Request(`https://s.example.com/${slug}`, { headers: { accept: "application/json" } }),
+    );
+    expect(response.status).toBe(200);
+    expect((await response.json() as { title: string }).title).toBe("Via header");
+  });
+
+  it("never exposes which caller minted the link", async () => {
+    const slug = await mintAndSlug("Private attribution");
+    const body = await (await call(new Request(`https://s.example.com/${slug}?format=json`))).json();
+    expect(body).not.toHaveProperty("caller");
+  });
+
+  it("prefers an explicit json ask over user-agent sniffing", async () => {
+    const slug = await mintAndSlug("Both signals");
+    const response = await call(
+      new Request(`https://s.example.com/${slug}?format=json`, {
+        headers: { "user-agent": "Slackbot-LinkExpanding 1.0" },
+      }),
+    );
+    expect(response.headers.get("content-type")).toContain("application/json");
+  });
+
+  it("still redirects a browser that did not ask for json", async () => {
+    const slug = await mintAndSlug("Plain");
+    const response = await call(
+      new Request(`https://s.example.com/${slug}`, { headers: { "user-agent": "Mozilla/5.0 Chrome/128.0" } }),
+    );
+    expect(response.status).toBe(302);
+  });
+
   it("404s an unknown slug", async () => {
     expect((await call(new Request("https://s.example.com/doesnotexist"))).status).toBe(404);
   });
