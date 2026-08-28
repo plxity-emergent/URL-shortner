@@ -6,7 +6,7 @@ export interface LinkRecord {
   readonly destination: string;
   readonly title: string;
   readonly description: string;
-  readonly image: string;
+  readonly image: string | null;
   readonly caller: string;
 }
 
@@ -23,8 +23,14 @@ function escapeHtml(value: string): string {
 export function renderPreviewHtml(record: LinkRecord): string {
   const title = escapeHtml(record.title);
   const description = escapeHtml(record.description);
-  const image = escapeHtml(record.image);
   const destination = escapeHtml(record.destination);
+
+  // No image means no image tags at all. A summary_large_image card pointing at nothing renders as
+  // a broken thumbnail, which looks worse than the plain card.
+  const image = record.image ? escapeHtml(record.image) : null;
+  const imageTags = image
+    ? `\n<meta property="og:image" content="${image}">\n<meta name="twitter:image" content="${image}">`
+    : "";
 
   return `<!doctype html>
 <html lang="en">
@@ -34,12 +40,10 @@ export function renderPreviewHtml(record: LinkRecord): string {
 <meta property="og:type" content="website">
 <meta property="og:title" content="${title}">
 <meta property="og:description" content="${description}">
-<meta property="og:image" content="${image}">
 <meta property="og:url" content="${destination}">
-<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:card" content="${image ? "summary_large_image" : "summary"}">
 <meta name="twitter:title" content="${title}">
-<meta name="twitter:description" content="${description}">
-<meta name="twitter:image" content="${image}">
+<meta name="twitter:description" content="${description}">${imageTags}
 <meta http-equiv="refresh" content="0; url=${destination}">
 </head>
 <body><a href="${destination}">${title}</a></body>

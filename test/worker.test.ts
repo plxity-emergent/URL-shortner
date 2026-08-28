@@ -7,7 +7,6 @@ import type { Env } from "../src/index";
 const TEST_ENV = {
   ...env,
   MINT_TOKENS: JSON.stringify({ proxy: "proxy-token", other: "other-token" }),
-  DEFAULT_OG_IMAGE: "https://example.com/preview.png",
 } as Env;
 
 const DESTINATION = "https://example.com/page";
@@ -94,7 +93,10 @@ describe("resolve", () => {
     expect(response.status).toBe(200);
     const html = await response.text();
     expect(html).toContain('property="og:title" content="Quarterly report"');
-    expect(html).toContain('content="https://example.com/preview.png"');
+    // The example namespace declares no image rules, so no image survives to the card.
+    expect(html).not.toContain("og:image");
+    expect(html).not.toContain("twitter:image");
+    expect(html).toContain('name="twitter:card" content="summary"');
   });
 
   it("escapes card text so a title cannot inject markup", async () => {

@@ -9,7 +9,6 @@ import { deriveSlug } from "./slug";
 
 export interface Env {
   readonly LINKS: KVNamespace;
-  readonly DEFAULT_OG_IMAGE: string;
   /** JSON object mapping caller name to its mint token. */
   readonly MINT_TOKENS: string;
 }
@@ -82,11 +81,8 @@ async function mint(request: Request, env: Env, origin: string): Promise<Respons
   if (!destination) return json({ error: "destination_rejected" }, 422);
 
   // A caller-supplied image failing the namespace rules is dropped, not fatal: a bad thumbnail
-  // should cost a thumbnail, not the link.
-  const image =
-    typeof payload.image === "string"
-      ? (validateImage(payload.image, namespace) ?? env.DEFAULT_OG_IMAGE)
-      : env.DEFAULT_OG_IMAGE;
+  // should cost a thumbnail, not the link. A namespace with no image rules never carries one.
+  const image = typeof payload.image === "string" ? validateImage(payload.image, namespace) : null;
 
   const record: LinkRecord = {
     namespace: payload.namespace,
@@ -100,7 +96,7 @@ async function mint(request: Request, env: Env, origin: string): Promise<Respons
   // The canonical string covers everything the card shows, so two callers describing the same
   // destination differently get two links instead of silently overwriting each other.
   const slug = await deriveSlug(
-    [record.namespace, record.destination, record.title, record.description, record.image].join("\n"),
+    [record.namespace, record.destination, record.title, record.description, record.image ?? ""].join("\n"),
   );
   await env.LINKS.put(slug, JSON.stringify(record));
 
