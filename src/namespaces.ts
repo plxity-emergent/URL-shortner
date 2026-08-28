@@ -44,6 +44,25 @@ export interface Namespace {
  * here: an over-broad rule is the difference between a shortener and an open redirect.
  */
 export const NAMESPACES: Record<string, Namespace> = {
+  /**
+   * Customer asset files. The leftmost label carries a per-deployment suffix and the host lands on
+   * either apex, so an exact list cannot work. `preview` is deliberately absent from envLabels:
+   * those subdomains serve user-controlled content and must never be wrappable.
+   */
+  asset: {
+    destination: [
+      {
+        kind: "labeled",
+        label: "customer-assets",
+        apexes: ["emergentagent.com", "emergentagent.net"],
+        envLabels: ["staging", "dev"],
+      },
+    ],
+    callers: ["proxy"],
+    defaultTitle: "Shared file",
+    defaultDescription: "Opens in your browser",
+  },
+
   example: {
     destination: [{ kind: "origin", origin: "https://example.com" }],
     callers: ["proxy"],

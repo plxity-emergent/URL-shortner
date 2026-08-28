@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { validateDestination } from "../src/destination";
 import { getNamespace, NAMESPACES } from "../src/namespaces";
 
 describe("namespace registry", () => {
@@ -29,5 +30,35 @@ describe("namespace registry", () => {
     for (const [id, namespace] of Object.entries(NAMESPACES)) {
       expect(namespace.defaultTitle, `${id} has no default title`).toBeTruthy();
     }
+  });
+});
+
+describe("the asset namespace", () => {
+  const asset = getNamespace("asset")!;
+
+  it("accepts a per-deployment suffixed host on either apex", () => {
+    expect(validateDestination("https://customer-assets-39nsmqrw.emergentagent.net/a/b.mp4", asset)).not.toBeNull();
+    expect(validateDestination("https://customer-assets.emergentagent.com/a/b.mp4", asset)).not.toBeNull();
+  });
+
+  it("accepts the listed environment labels", () => {
+    expect(validateDestination("https://customer-assets-x.staging.emergentagent.net/f.mp4", asset)).not.toBeNull();
+    expect(validateDestination("https://customer-assets-x.dev.emergentagent.com/f.mp4", asset)).not.toBeNull();
+  });
+
+  it("refuses preview subdomains, which serve user-controlled content", () => {
+    expect(validateDestination("https://customer-assets-x.preview.emergentagent.com/f.mp4", asset)).toBeNull();
+  });
+
+  it("refuses a look-alike apex", () => {
+    expect(validateDestination("https://customer-assets.emergentagent.com.evil.test/f.mp4", asset)).toBeNull();
+  });
+
+  it("refuses a label that merely starts the same way", () => {
+    expect(validateDestination("https://customer-assetshub.emergentagent.com/f.mp4", asset)).toBeNull();
+  });
+
+  it("refuses plain http", () => {
+    expect(validateDestination("http://customer-assets.emergentagent.com/f.mp4", asset)).toBeNull();
   });
 });
