@@ -1,11 +1,6 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "url-shortener",
-
-  // Pinned deliberately. This account is the Dev account. Without an explicit account_id wrangler
-  // will pick one when the token can see several, and this token can also see Prod.
-  "account_id": "ef0f9f6628e87915b13b39fefadc2757",
-
   "main": "src/index.ts",
   "compatibility_date": "2026-08-01",
   "observability": { "enabled": true },
@@ -13,12 +8,35 @@
   // Cloudflare's own *.workers.dev hostname. No custom domain, no DNS record, no zone involved.
   "workers_dev": true,
 
-  // Created in the Dev account as "url-shortener-LINKS". No preview_id: local dev uses Miniflare's
-  // on-disk storage, and we never run `wrangler dev --remote`.
-  "kv_namespaces": [
-    {
-      "binding": "LINKS",
-      "id": "966d05eeec9d4065a0477b6db5500e60"
+  // ---------------------------------------------------------------------------------------------
+  // Top level is STAGING. A bare `wrangler deploy` therefore targets the staging account, which is
+  // the safe default: the destructive mistake is deploying to production by accident, not to
+  // staging. Production requires an explicit `--env production`.
+  //
+  // account_id is pinned in both blocks on purpose. The credentials in use can see both accounts,
+  // and CLOUDFLARE_ACCOUNT_ID does NOT override a pinned account_id, so this is what actually
+  // decides where a deploy lands.
+  // ---------------------------------------------------------------------------------------------
+  "account_id": "ef0f9f6628e87915b13b39fefadc2757",
+  "kv_namespaces": [{ "binding": "LINKS", "id": "966d05eeec9d4065a0477b6db5500e60" }],
+
+  "env": {
+    "staging": {
+      // Same target as top level, named so CI can be explicit rather than relying on the default.
+      "name": "url-shortener",
+      "account_id": "ef0f9f6628e87915b13b39fefadc2757",
+      "workers_dev": true,
+      "observability": { "enabled": true },
+      "kv_namespaces": [{ "binding": "LINKS", "id": "966d05eeec9d4065a0477b6db5500e60" }]
+    },
+
+    "production": {
+      // `name` is set explicitly so wrangler does not append the environment as a suffix.
+      "name": "url-shortener",
+      "account_id": "18347d7ca94e7b92b97f25a4edd2a992",
+      "workers_dev": true,
+      "observability": { "enabled": true },
+      "kv_namespaces": [{ "binding": "LINKS", "id": "595ab7d7c881468c978359e7ef64db92" }]
     }
-  ]
+  }
 }
