@@ -134,13 +134,53 @@ Tests and `npm run dev` run entirely on Miniflare and do not contact a Cloudflar
 
 ## Deployment
 
-`npm run deploy`, or push to `main` and let `.github/workflows/deploy.yml` do it. The workflow needs
-two repository secrets:
+Two environments, in two separate Cloudflare accounts:
 
-| Secret | Value |
+| Environment | Account | Hostname |
+| --- | --- | --- |
+| `staging` | dev | `url-shortener.manish-f0f.workers.dev` |
+| `production` | prod | `url-shortener.emergent.workers.dev` |
+
+```bash
+npm run deploy                        # staging (the bare command is the safe default)
+npx wrangler deploy --env production  # production
+```
+
+Top level in `wrangler.jsonc` is staging on purpose: the destructive mistake is reaching production
+by accident, not staging, so production requires an explicit `--env production`.
+
+**`account_id` is pinned in both environment blocks, and that is what decides where a deploy lands.**
+A pinned `account_id` beats the `CLOUDFLARE_ACCOUNT_ID` environment variable, so setting that
+variable will not move a deploy to another account. This is deliberate: the credentials in use can
+see both accounts.
+
+### Pipeline
+
+`.github/workflows/deploy.yml` runs typecheck and tests on every push and pull request, then:
+
+| Trigger | What deploys |
 | --- | --- |
-| `CLOUDFLARE_ACCOUNT_ID` | Target account id |
-| `CLOUDFLARE_API_TOKEN` | Token with **Workers Scripts: Edit** and **Workers KV Storage: Edit** |
+| Push to `main` | staging |
+| Run workflow, choose `staging` | staging |
+| Run workflow, choose `production` | production |
 
-The account id is also pinned in `wrangler.jsonc`, so Wrangler cannot select a different account
-when the credentials can see more than one.
+Production is never reached by merging. It needs someone to run the workflow by hand and pick it, so
+nothing goes live because a pull request was approved.
+
+Two repository secrets, each an API token scoped to its own account with **Workers Scripts: Edit**
+and **Workers KV Storage: Edit**:
+
+| Secret | Account |
+| --- | --- |
+| `CLOUDFLARE_API_TOKEN_STAGING` | dev |
+| `CLOUDFLARE_API_TOKEN_PRODUCTION` | prod |
+
+Both currently hold placeholders, so both deploy jobs fail until real tokens are set. No account id
+secret is needed, since `wrangler.jsonc` decides that.
+
+Each environment also needs its own `MINT_TOKEN` Worker secret, set separately:
+
+```bash
+npx wrangler secret put MINT_TOKEN --env staging
+npx wrangler secret put MINT_TOKEN --env production
+```

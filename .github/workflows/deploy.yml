@@ -5,6 +5,13 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      environment:
+        description: Environment to deploy
+        required: true
+        type: choice
+        default: staging
+        options: [staging, production]
 
 jobs:
   test:
@@ -20,10 +27,14 @@ jobs:
       - run: npm run typecheck
       - run: npm test
 
-  deploy:
-    name: Deploy to Cloudflare (Dev)
+  # Merging to main ships staging. Production is never reached by merging: it needs someone to run
+  # the workflow by hand and pick it, so nothing goes live because a PR was approved.
+  deploy-staging:
+    name: Deploy to staging
     needs: test
-    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    if: >-
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_dispatch' && inputs.environment == 'staging')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -32,12 +43,24 @@ jobs:
           node-version: "22"
           cache: npm
       - run: npm ci
-
-      # The account is also pinned in wrangler.jsonc. Passing it here too means a wrong or missing
-      # repository secret fails the job instead of silently deploying somewhere unintended.
-      - name: Deploy
-        uses: cloudflare/wrangler-action@v3
+      - uses: cloudflare/wrangler-action@v3
         with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: deploy
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN_STAGING }}
+          command: deploy --env staging
+
+  deploy-production:
+    name: Deploy to production
+    needs: test
+    if: github.event_name == 'workflow_dispatch' && inputs.environment == 'production'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN_PRODUCTION }}
+          command: deploy --env production
